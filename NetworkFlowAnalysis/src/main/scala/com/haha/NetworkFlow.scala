@@ -4,7 +4,7 @@ import java.sql.Timestamp
 import java.text.SimpleDateFormat
 
 import org.apache.flink.api.common.functions.AggregateFunction
-import org.apache.flink.api.common.state.{ListState, ListStateDescriptor}
+import org.apache.flink.api.common.state.{ListState, ListStateDescriptor, MapState, MapStateDescriptor}
 import org.apache.flink.streaming.api.TimeCharacteristic
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction
 import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor
@@ -28,9 +28,9 @@ object NetworkFlow {
     env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
     env.setParallelism(1)
 
-    //    val inputStream = env.readTextFile("D:\\Flink\\UserBehaviorAnalysis\\NetworkFlowAnalysis\\src\\main\\resources\\apache.log")
+    val inputStream = env.readTextFile("D:\\Flink\\UserBehaviorAnalysis\\NetworkFlowAnalysis\\src\\main\\resources\\apache.log")
 
-    val inputStream = env.socketTextStream("localhost", 7777)
+    //    val inputStream = env.socketTextStream("localhost", 7777)
 
     val dataStream = inputStream
       .map(line => {
@@ -91,28 +91,46 @@ class PageViewCountWindowResult extends WindowFunction[Long, PageViewCount, Stri
 
 class TopNHotPages(n: Int) extends KeyedProcessFunction[Long, PageViewCount, String] {
 
-  lazy val pageViewCountListState: ListState[PageViewCount] =
-    getRuntimeContext.getListState(new ListStateDescriptor[PageViewCount]("pageViewCount-list", classOf[PageViewCount]))
+  //  lazy val pageViewCountListState: ListState[PageViewCount] = getRuntimeContext.getListState(new ListStateDescriptor[PageViewCount]("pageViewCount-list", classOf[PageViewCount]))
+  lazy val pageViewCountMapState: MapState[String, Long] = getRuntimeContext.getMapState(new MapStateDescriptor[String, Long]("pageViewCount-map", classOf[String], classOf[Long]))
+
 
   override def processElement(i: PageViewCount, context: KeyedProcessFunction[Long, PageViewCount, String]#Context, collector: Collector[String]): Unit = {
-    pageViewCountListState.add(i)
-
+    //    pageViewCountListState.add(i)
+    pageViewCountMapState.put(i.url, i.count)
     context.timerService().registerEventTimeTimer(i.windowEnd + 1)
+    //另外追一个定时器，1分钟后出发，这是窗口已经关闭，不在有聚合结果输出，可以清空结果
+    context.timerService().registerEventTimeTimer(i.windowEnd + 60000L)
   }
 
   override def onTimer(timestamp: Long, ctx: KeyedProcessFunction[Long, PageViewCount, String]#OnTimerContext, out: Collector[String]): Unit = {
-    val allPageViewCounts: ListBuffer[PageViewCount] = ListBuffer()
-    val iter = pageViewCountListState.get().iterator()
+    //    val allPageViewCounts: ListBuffer[PageViewCount] = ListBuffer()
+    //    val iter = pageViewCountListState.get().iterator()
+    //
+    //    while (iter.hasNext) {
+    //      allPageViewCounts += iter.next()
+    //    }
+    //
+    //    //清空状态,会有问题，会导致迟到数据来时，原来的排序数据已不见了
+    //    pageViewCountListState.clear()
 
-    while (iter.hasNext) {
-      allPageViewCounts += iter.next()
+    //判断定时器出发时间，如果已经是窗口结束时间1分钟之后，那么直接清空状态
+    if (timestamp == ctx.getCurrentKey + 60000L) {
+      pageViewCountMapState.clear()
+      return
     }
 
-    //清空状态
-    pageViewCountListState.clear()
+    val allPageViewCounts: ListBuffer[(String, Long)] = ListBuffer()
+
+    val iter = pageViewCountMapState.entries().iterator()
+
+    while (iter.hasNext) {
+      val entry = iter.next()
+      allPageViewCounts += ((entry.getKey, entry.getValue))
+    }
 
     // 按照访问量排序并输出top n
-    val sortedPageViewCounts = allPageViewCounts.sortWith(_.count > _.count).take(n)
+    val sortedPageViewCounts = allPageViewCounts.sortBy(_._2)(Ordering.Long.reverse).take(n)
 
 
     // 将排名信息格式化为String,便于显示
@@ -125,8 +143,8 @@ class TopNHotPages(n: Int) extends KeyedProcessFunction[Long, PageViewCount, Str
     for (i <- sortedPageViewCounts.indices) {
       val currentItemViewCount = sortedPageViewCounts(i)
       result.append("NO").append(i + 1).append(": ")
-        .append("URL=").append(currentItemViewCount.url).append("\t")
-        .append("热门度=").append(currentItemViewCount.count).append("\n")
+        .append("URL=").append(currentItemViewCount._1).append("\t")
+        .append("热门度=").append(currentItemViewCount._2).append("\n")
     }
 
     result.append("============================================\n\n")
