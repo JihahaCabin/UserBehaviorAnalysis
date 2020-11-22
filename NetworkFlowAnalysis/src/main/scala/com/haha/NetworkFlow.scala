@@ -28,7 +28,11 @@ object NetworkFlow {
     env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
     env.setParallelism(1)
 
-    val dataStream = env.readTextFile("D:\\Flink\\UserBehaviorAnalysis\\NetworkFlowAnalysis\\src\\main\\resources\\apache.log")
+    //    val inputStream = env.readTextFile("D:\\Flink\\UserBehaviorAnalysis\\NetworkFlowAnalysis\\src\\main\\resources\\apache.log")
+
+    val inputStream = env.socketTextStream("localhost", 7777)
+
+    val dataStream = inputStream
       .map(line => {
         val linearray = line.split(" ")
         //转换时间
@@ -38,7 +42,7 @@ object NetworkFlow {
         ApacheLogEvent(linearray(0), linearray(2), timestamp, linearray(5), linearray(6))
 
       })
-      .assignTimestampsAndWatermarks(new BoundedOutOfOrdernessTimestampExtractor[ApacheLogEvent](Time.minutes(1000)) {
+      .assignTimestampsAndWatermarks(new BoundedOutOfOrdernessTimestampExtractor[ApacheLogEvent](Time.seconds(1)) {
         //因为数据是乱序的，因此使用该方法，设置waterMark
         override def extractTimestamp(t: ApacheLogEvent): Long = t.timestamp
       })
@@ -49,6 +53,8 @@ object NetworkFlow {
     })
       .keyBy(_.url)
       .timeWindow(Time.minutes(10), Time.seconds(5))
+      .allowedLateness(Time.minutes(1))
+      .sideOutputLateData(new OutputTag[ApacheLogEvent]("late"))
       .aggregate(new PageCountAgg(), new PageViewCountWindowResult)
 
 
@@ -56,6 +62,9 @@ object NetworkFlow {
       .keyBy(_.windowEnd)
       .process(new TopNHotPages(3))
 
+    dataStream.print("data")
+    aggStream.print("agg")
+    aggStream.getSideOutput(new OutputTag[ApacheLogEvent]("late"))
     resultStream.print()
 
     env.execute("hot Page Network flow")
