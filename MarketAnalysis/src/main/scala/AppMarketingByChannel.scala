@@ -1,11 +1,22 @@
+import java.lang
+import java.sql.Timestamp
 import java.util.UUID
 
+import org.apache.flink.streaming.api.TimeCharacteristic
 import org.apache.flink.streaming.api.functions.source.{RichSourceFunction, SourceFunction}
+import org.apache.flink.streaming.api.scala._
+import org.apache.flink.streaming.api.scala.function.ProcessWindowFunction
+import org.apache.flink.streaming.api.windowing.time.Time
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow
+import org.apache.flink.util.Collector
 
 import scala.util.Random
 
 // 定义输入数据样例类
 case class MarketUserBehavior(userId: String, behavior: String, channel: String, timestamp: Long)
+
+// 定义输出数据样例类
+case class MarketViewCount(windowStart: String, windowEnd: String, channel: String, behavior: String, count: Long)
 
 //自定义测试数据源
 class SimulatedSource() extends RichSourceFunction[MarketUserBehavior] {
@@ -42,6 +53,38 @@ class SimulatedSource() extends RichSourceFunction[MarketUserBehavior] {
 
 object AppMarketingByChannel {
   def main(args: Array[String]): Unit = {
+    val env = StreamExecutionEnvironment.getExecutionEnvironment
+    env.setParallelism(1)
+    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
 
+    val dataStream = env.addSource(new SimulatedSource)
+      .assignAscendingTimestamps(_.timestamp)
+
+    // 开窗统计输出
+    val resultStream = dataStream
+      .filter(_.behavior != "uninstall")
+      .keyBy(data => (data.channel, data.behavior))
+      .timeWindow(Time.days(1), Time.seconds(5))
+      .process(new MarketCountByChannel())
+
+
+    resultStream.print()
+
+    env.execute("app market by channel job")
+
+
+  }
+}
+
+
+//自定义ProcessWindowFunction
+class MarketCountByChannel() extends ProcessWindowFunction[MarketUserBehavior, MarketViewCount, (String, String), TimeWindow] {
+  override def process(key: (String, String), context: Context, elements: Iterable[MarketUserBehavior], out: Collector[MarketViewCount]): Unit = {
+    val start = new Timestamp(context.window.getStart).toString
+    val end = new Timestamp(context.window.getEnd).toString
+    val channel = key._1
+    val behavior = key._2
+    val count = elements.size
+    out.collect(MarketViewCount(start, end, channel, behavior, count))
   }
 }
