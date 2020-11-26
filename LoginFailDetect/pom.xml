@@ -12,4 +12,14 @@
     <artifactId>LoginFailDetect</artifactId>
 
 
+    <dependencies>
+        <!--引入 CEP 的相关依赖-->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-cep-scala_${scala.binary.version}</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+    </dependencies>
+
+
 </project>
