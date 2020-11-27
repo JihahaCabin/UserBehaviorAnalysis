@@ -20,7 +20,10 @@ object OrderTimeout {
         val arr = data.split(",")
         OrderEvent(arr(0).toLong, arr(1), arr(2), arr(3).toLong)
       })
-      .assignAscendingTimestamps(_.timestamp)
+      .assignAscendingTimestamps(_.timestamp * 1000L)
+      .keyBy(_.orderId)
+
+    //
 
 
   }
