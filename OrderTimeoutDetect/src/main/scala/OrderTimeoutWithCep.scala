@@ -13,7 +13,7 @@ case class OrderEvent(orderId: Long, eventType: String, txId: String, timestamp:
 
 case class OrderResult(orderId: Long, resultMsg: String)
 
-object OrderTimeout {
+object OrderTimeoutWithCep {
   def main(args: Array[String]): Unit = {
     val env = StreamExecutionEnvironment.getExecutionEnvironment
     env.setParallelism(1)
